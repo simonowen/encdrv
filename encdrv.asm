@@ -1,8 +1,6 @@
 ; Quazar Trinity ethernet driver for ENC28J60
 ;
 ; By Simon Owen <simon@simonowen.com>
-;
-; Last updated: 10/2/2009
 
 rx_start:      EQU  &0000
 rx_end:        EQU  &19FF          ; 6.5K for RX
@@ -20,7 +18,7 @@ tx_flags:      DEFB &00            ; use &03 to append CRC
 
 ; Initialise ENC
 ; Entry: HL points to MAC address to use
-; Exit: 1 if successful, 0 if Trinity missing or ENC too old
+; Exit: BC=1 if successful, BC=0 if Trinity missing or ENC too old
 drv_init:      DI
 
                PUSH HL             ; save MAC pointer
@@ -29,7 +27,7 @@ drv_init:      DI
                JP   NZ,exit_failure
 
                CALL ereset         ; reset ENC
-               CALL enulloff
+               CALL enulloff       ; auto-nulling off
 
 
                LD   E,&03          ; bank 3
@@ -126,7 +124,7 @@ drv_read:      DI
                LD   (read_ptr),HL  ; save for next time
 
                LD   HL,(rx_status+2) ; packet length
-               LD   DE,-4          ; appende crc length
+               LD   DE,-4          ; crc length
                ADD  HL,DE          ; remove from pkt len
                POP  DE             ; caller buffer pointer
                PUSH HL             ; save length
@@ -142,7 +140,7 @@ no_ptr_wrap:   LD   D,&0C          ; ERXRDPTL/H (bank 0)
                CALL wr_ctl_pair
 
                LD   DE,&1E40       ; ECON2, PKTDEC
-               CALL bfs_ctl_reg
+               CALL bfs_ctl_reg    ; decrement packet count
 
                POP  BC             ; restore length
                LD   HL,rx_status   ; status details
@@ -201,7 +199,7 @@ tx_retry:
                CALL bfs_ctl_reg    ; transmit!
 
                LD   A,2
-               OUT  (&FE),A
+               OUT  (&FE),A        ; red border during tx
 
                LD   D,&1C          ; EIR
 wait_sent:     CALL rd_ctl_reg     ; read interrupt status
@@ -210,7 +208,7 @@ wait_sent:     CALL rd_ctl_reg     ; read interrupt status
                JR   Z,wait_sent    ; loop if still sending
 
                XOR  A
-               OUT  (&FE),A
+               OUT  (&FE),A        ; black border after tx
 
                LD   DE,&1F08       ; ECON1, TXRTS bit
                CALL bfc_ctl_reg    ; transmit finished
@@ -233,18 +231,21 @@ tx_len_patch:  LD   DE,0           ; length patched above
                JR   Z,tx_success   ; all done if no error
 
                LD   A,1
-               OUT  (&FE),A
+               OUT  (&FE),A        ; blue border for tx error
 
                LD   A,(tx_status+3)
                BIT  5,A            ; late TX collision?
                JR   Z,tx_success   ; all done if no collision
+
                LD   A,6
-               OUT  (&FE),A
+               OUT  (&FE),A        ; yellow border for tx collision
 
                DEC  L              ; retry counter
                JR   NZ,tx_retry    ; try again?
+
                LD   A,7
-               OUT  (&FE),A
+               OUT  (&FE),A        ; white border for tx failure
+
                JR   exit_failure   ; failed!
 
 tx_success:    LD   HL,tx_status   ; status details
@@ -351,12 +352,13 @@ rd_buf_mem:    CALL eon
                CALL enullon        ; auto-nulling on
 
                LD   A,4
-               OUT  (&FE),A
+               OUT  (&FE),A        ; green border during rx
 
 rd_buf_lp:     IN   A,(&DC)
                AND  %00001000      ; busy?
                JR   NZ,rd_buf_lp   ; if so, wait
-               OUT  (&FE),A
+
+               OUT  (&FE),A        ; black border after rx
 
                INI                 ; read buffer byte
                JR   NZ,rd_buf_lp
@@ -426,27 +428,27 @@ enulloff:      CALL wait_ready
                OUT  (&DC),A
                RET
 
-set_mac_addr:  LD   D,&04
+set_mac_addr:  LD   D,&04          ; [4] (register aren't in order!)
                LD   E,(HL)
                CALL wr_ctl_reg
                INC  HL
-               INC  D
+               INC  D              ; [5]
                LD   E,(HL)
                CALL wr_ctl_reg
                INC  HL
-               LD   D,&02
+               LD   D,&02          ; [2]
                LD   E,(HL)
                CALL wr_ctl_reg
                INC  HL
-               INC  D
+               INC  D              ; [3]
                LD   E,(HL)
                CALL wr_ctl_reg
                INC  HL
-               LD   D,&00
+               LD   D,&00          ; [0]
                LD   E,(HL)
                CALL wr_ctl_reg
                INC  HL
-               INC  D
+               INC  D              ; [1]
                LD   E,(HL)
                JP   wr_ctl_reg
 
